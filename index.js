@@ -1481,36 +1481,53 @@ app.post("/tools/upload", upload.single("excelFile"), async (req, res) => {
   try {
     const fileBuffer = req.file.buffer;
     const workbook = XLSX.read(fileBuffer, { type: "buffer" });
-    const sheetName = workbook.SheetNames[0]; // take first sheet
+    const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(sheet);
+    const data = XLSX.utils.sheet_to_json(sheet, { defval: "" });
 
-    // Transform data: convert comma-separated strings to arrays for profession & tags
-    const tools = data.map((row) => ({
-      name: row.name || "",
-      description: row.description || "",
-      category: row.category || "",
-      link: row.link || "",
-      rating: row.rating || 0,
-      pricing: row.pricing || "",
-      official_link: row.official_link || "",
-      availability: row.availability || "",
-      details: row.details || "",
-      profession: row.profession ? row.profession.split(",").map((s) => s.trim()) : [],
-      tags: row.tags ? row.tags.split(",").map((s) => s.trim()) : [],
-      new_description: row.new_description || "",
-      image_url: row.image_url || "",
-      overviewimg: row.overviewimg || "",
-      date: row.date || "",
-    }));
+    // Detect profession-related columns dynamically (Profession1, Profession2, etc.)
+    const headers = Object.keys(data[0]);
+    const professionColumns = headers.filter(h =>
+      h.toLowerCase().includes("profession")
+    );
 
-    // Insert all tools in MongoDB
+    const tools = data.map((row) => {
+      // Combine all profession columns into a single array
+      const professionArray = professionColumns
+        .map(col => row[col])
+        .filter(val => val && val.trim() !== ""); // remove empty values
+
+      return {
+        name: row.name || "",
+        description: row.description || "",
+        category: row.category || "",
+        link: row.link || "",
+        rating: Number(row.rating) || 0,
+        pricing: row.pricing || "",
+        official_link: row.official_link || "",
+        availability: row.availability || "",
+        details: row.details || "",
+        profession: professionArray, // ✅ combined professions
+        tags: (row.tags ? row.tags.split(",").map(t => t.trim()) : []),
+        new_description: row.new_description || "",
+        image_url: row.image_url || "",
+        overviewimg: row.overviewimg || "",
+        date: row.date || "",
+      };
+    });
+
+    // Save to MongoDB
     await Tool.insertMany(tools);
 
-    res.send(`<h2 class="text-green-600 font-bold">Successfully uploaded ${tools.length} tools!</h2>
-              <a href="/tools" class="text-blue-600 hover:underline">Go back to tools page</a>`);
+    res.send(`
+      <h2 style="color:green;font-family:sans-serif;">
+        ✅ Uploaded ${tools.length} tools successfully!
+      </h2>
+      <p>All profession columns merged correctly into one.</p>
+      <a href="/tools" style="color:blue;">Go back to tools page</a>
+    `);
   } catch (err) {
-    console.error(err);
+    console.error("❌ Excel upload error:", err);
     res.status(500).send("Error processing Excel file: " + err.message);
   }
 });
