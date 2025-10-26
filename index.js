@@ -1483,56 +1483,39 @@ app.post("/tools/upload", upload.single("excelFile"), async (req, res) => {
     const workbook = XLSX.read(fileBuffer, { type: "buffer" });
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+    const data = XLSX.utils.sheet_to_json(sheet);
 
-    // Detect profession-related columns dynamically (Profession1, Profession2, etc.)
-    const headers = Object.keys(data[0]);
-    const professionColumns = headers.filter(h =>
-      h.toLowerCase().includes("profession")
-    );
+    const tools = data.map((row) => ({
+      name: row.name || "",
+      description: row.description || "",
+      category: row.category || "",
+      link: row.link || "",
+      rating: row.rating || 0,
+      pricing: row.pricing || "",
+      official_link: row.official_link || "",
+      availability: row.availability || "",
+      details: row.details || "",
+      profession: row.profession ? row.profession.split(",").map((s) => s.trim()) : [],
+      tags: row.tags ? row.tags.split(",").map((s) => s.trim()) : [],
+      new_description: row.new_description || "",
+      image_url: row.image_url || "",
+      overviewimg: row.overviewimg || "",
+      date: row.date || "",
+      featured: row.featured === "true" || row.featured === true, // ✅ Excel column support
+    }));
 
-    const tools = data.map((row) => {
-      // Combine all profession columns into a single array
-      const professionArray = professionColumns
-        .map(col => row[col])
-        .filter(val => val && val.trim() !== ""); // remove empty values
-
-      return {
-        name: row.name || "",
-        description: row.description || "",
-        category: row.category || "",
-        link: row.link || "",
-        rating: Number(row.rating) || 0,
-        pricing: row.pricing || "",
-        official_link: row.official_link || "",
-        availability: row.availability || "",
-        details: row.details || "",
-        profession: professionArray, // ✅ combined professions
-        tags: (row.tags ? row.tags.split(",").map(t => t.trim()) : []),
-        new_description: row.new_description || "",
-        image_url: row.image_url || "",
-        overviewimg: row.overviewimg || "",
-        date: row.date || "",
-      };
-    });
-
-    // Save to MongoDB
     await Tool.insertMany(tools);
 
-    res.send(`
-      <h2 style="color:green;font-family:sans-serif;">
-        ✅ Uploaded ${tools.length} tools successfully!
-      </h2>
-      <p>All profession columns merged correctly into one.</p>
-      <a href="/tools" style="color:blue;">Go back to tools page</a>
-    `);
+    res.send(`<h2 class="text-green-600 font-bold">Successfully uploaded ${tools.length} tools!</h2>
+              <a href="/tools" class="text-blue-600 hover:underline">Go back to tools page</a>`);
   } catch (err) {
-    console.error("❌ Excel upload error:", err);
+    console.error(err);
     res.status(500).send("Error processing Excel file: " + err.message);
   }
 });
 
-// Tool Schema
+
+// 📘 Tool Schema with Featured Boolean
 const toolSchema = new mongoose.Schema(
   {
     name: String,
@@ -1550,6 +1533,7 @@ const toolSchema = new mongoose.Schema(
     image_url: String,
     date: String,
     overviewimg: String,
+    featured: { type: Boolean, default: false }, // ✅ Added featured boolean
   },
   { collection: "tools" }
 );
@@ -1591,13 +1575,17 @@ app.get("/api/tools/:id", async (req, res) => {
 // Create tool
 app.post("/api/tools", async (req, res) => {
   try {
-    const newTool = new Tool(req.body);
+    const newTool = new Tool({
+      ...req.body,
+      featured: req.body.featured === "on" || req.body.featured === true, // ✅ checkbox handling
+    });
     await newTool.save();
     res.status(201).json(newTool);
   } catch (err) {
     res.status(500).json({ error: "Error creating tool" });
   }
 });
+
 
 // Update tool
 app.put("/api/tools/:id", async (req, res) => {
@@ -1781,17 +1769,10 @@ app.delete("/api/tools/:id", async (req, res) => {
 
 // ===== Tools Page with Pagination ===== //
 app.get("/tools", async (req, res) => {
-  const perPage = 40; // records per page
-  const page = parseInt(req.query.page) || 1; // current page number
-
-  // Get total count of tools
+  const perPage = 40;
+  const page = parseInt(req.query.page) || 1;
   const recordCount = await Tool.countDocuments();
-
-  // Fetch tools for the current page
-  const tools = await Tool.find()
-    .skip((page - 1) * perPage)
-    .limit(perPage);
-
+  const tools = await Tool.find().skip((page - 1) * perPage).limit(perPage);
   const totalPages = Math.ceil(recordCount / perPage);
 
   let html = `
@@ -1802,28 +1783,11 @@ app.get("/tools", async (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Select AI Tool - CRUD</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-      .fade-in { 
-        animation: fadeIn 0.5s ease-in-out; 
-      }
-      @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-      .hover-scale:hover {
-        transform: scale(1.03);
-        transition: all 0.3s ease;
-      }
-      th {
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-    </style>
   </head>
   <body class="bg-gray-50 min-h-screen flex flex-col items-center p-4">
-    <h1 class="text-4xl sm:text-5xl font-bold text-gray-800 mb-6 fade-in">Select AI Tool - CRUD</h1>
+    <h1 class="text-4xl font-bold mb-6">Select AI Tool - CRUD</h1>
 
-   <!-- Buttons Section -->
+    <!-- Buttons Section -->
 <div class="w-full max-w-5xl flex justify-end mb-4 gap-3">
   <a href="/tools/upload" 
      class="flex items-center gap-2 bg-green-600 text-white px-5 py-2 rounded-lg shadow-md hover:bg-green-700 hover:shadow-lg transition-all duration-300 font-semibold">
@@ -1850,32 +1814,37 @@ app.get("/tools", async (req, res) => {
 
 </div>
 
-
-    <!-- Create Tool Form -->
-    <div class="w-full max-w-5xl bg-white rounded-lg shadow-lg p-6 mb-8 fade-in">
+    <div class="w-full max-w-5xl bg-white rounded-lg shadow-lg p-6 mb-8">
       <h2 class="text-2xl font-semibold mb-4">Create New Tool</h2>
       <form method="POST" action="/api/tools" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <input name="name" placeholder="Name" required class="border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-        <input name="category" placeholder="Category" class="border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-        <input name="link" placeholder="Link" class="border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-        <input name="official_link" placeholder="Official Link" class="border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-        <input name="pricing" placeholder="Pricing" class="border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-        <input name="availability" placeholder="Availability" class="border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-        <input name="rating" placeholder="Rating" type="number" step="0.1" class="border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-        <input name="date" placeholder="Date" type="date" class="border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-        <input name="image_url" placeholder="Image URL" class="border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-        <input name="overviewimg" placeholder="Overview Image URL" class="border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-        <input name="profession" placeholder="Professions (comma separated)" class="border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-        <input name="tags" placeholder="Tags (comma separated)" class="border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-        <textarea name="description" placeholder="Description" class="border border-gray-300 rounded px-4 py-2 col-span-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
-        <textarea name="new_description" placeholder="New Description" class="border border-gray-300 rounded px-4 py-2 col-span-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
-        <textarea name="details" placeholder="Details" class="border border-gray-300 rounded px-4 py-2 col-span-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
-        <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition-colors col-span-2">Add Tool</button>
+        <input name="name" placeholder="Name" required class="border px-4 py-2 rounded"/>
+        <input name="category" placeholder="Category" class="border px-4 py-2 rounded"/>
+        <input name="link" placeholder="Link" class="border px-4 py-2 rounded"/>
+        <input name="official_link" placeholder="Official Link" class="border px-4 py-2 rounded"/>
+        <input name="pricing" placeholder="Pricing" class="border px-4 py-2 rounded"/>
+        <input name="availability" placeholder="Availability" class="border px-4 py-2 rounded"/>
+        <input name="rating" placeholder="Rating" type="number" step="0.1" class="border px-4 py-2 rounded"/>
+        <input name="date" placeholder="Date" type="date" class="border px-4 py-2 rounded"/>
+        <input name="image_url" placeholder="Image URL" class="border px-4 py-2 rounded"/>
+        <input name="overviewimg" placeholder="Overview Image URL" class="border px-4 py-2 rounded"/>
+        <input name="profession" placeholder="Professions (comma separated)" class="border px-4 py-2 rounded"/>
+        <input name="tags" placeholder="Tags (comma separated)" class="border px-4 py-2 rounded"/>
+
+        <!-- ✅ Featured Checkbox -->
+        <div class="flex items-center gap-2 col-span-2">
+          <input type="checkbox" name="featured" id="featured" class="w-4 h-4"/>
+          <label for="featured" class="text-gray-700 font-medium">Mark as Featured</label>
+        </div>
+
+        <textarea name="description" placeholder="Description" class="border px-4 py-2 col-span-2 rounded"></textarea>
+        <textarea name="new_description" placeholder="New Description" class="border px-4 py-2 col-span-2 rounded"></textarea>
+        <textarea name="details" placeholder="Details" class="border px-4 py-2 col-span-2 rounded"></textarea>
+        <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded col-span-2">Add Tool</button>
       </form>
     </div>
 
     <!-- Tools Table -->
-    <div class="w-full max-w-7xl bg-white rounded-lg shadow-lg p-6 fade-in overflow-x-auto">
+    <div class="w-full max-w-7xl bg-white rounded-lg shadow-lg p-6 overflow-x-auto">
       <div class="flex justify-between items-center mb-4">
         <h2 class="text-2xl font-semibold">All Tools</h2>
         <span class="text-gray-600 font-medium">${recordCount} record(s)</span>
@@ -1886,6 +1855,7 @@ app.get("/tools", async (req, res) => {
           <tr>
             <th class="px-3 py-2 text-left font-medium">Name</th>
             <th class="px-3 py-2 text-left font-medium">Category</th>
+            <th class="px-3 py-2 text-left font-medium">Featured</th>
             <th class="px-3 py-2 text-left font-medium">Description</th>
             <th class="px-3 py-2 text-left font-medium">Link</th>
             <th class="px-3 py-2 text-left font-medium">Official Link</th>
@@ -1910,6 +1880,9 @@ app.get("/tools", async (req, res) => {
       <tr class="border-t hover:bg-gray-50 transition-colors">
         <td class="px-3 py-2">${tool.name}</td>
         <td class="px-3 py-2">${tool.category || "-"}</td>
+        <td class="px-3 py-2">
+          ${tool.featured ? '<span class="text-green-600 font-semibold">Yes</span>' : '<span class="text-gray-500">No</span>'}
+        </td>
         <td class="px-3 py-2">${tool.description || "-"}</td>
         <td class="px-3 py-2"><a href="${tool.link || '#'}" target="_blank" class="text-blue-600 hover:underline">Link</a></td>
         <td class="px-3 py-2"><a href="${tool.official_link || '#'}" target="_blank" class="text-blue-600 hover:underline">Official</a></td>
@@ -1935,32 +1908,14 @@ app.get("/tools", async (req, res) => {
   html += `
         </tbody>
       </table>
-
-      <!-- Pagination -->
-      <div class="flex justify-center mt-6 space-x-2">
-  `;
-
-  for (let i = 1; i <= totalPages; i++) {
-    html += `
-      <a href="/tools?page=${i}" class="px-3 py-1 rounded ${i === page ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'} transition">${i}</a>
-    `;
-  }
-
-  html += `
-      </div>
     </div>
-
-    <script>
-      function confirmDelete(toolName) {
-        return confirm('Are you sure you want to delete "' + toolName + '"?');
-      }
-    </script>
   </body>
   </html>
   `;
 
   res.send(html);
 });
+
 
 
 // 📚 Ebook Schema
