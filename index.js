@@ -21,14 +21,18 @@ const upload = multer({ storage: multer.memoryStorage() });
 // ─── MongoDB (cached connection for Vercel serverless) ─────────────────────────
 let isConnected = false;
 async function connectDB() {
+  if (mongoose.connection.readyState === 1) { isConnected = true; return; }
   if (isConnected) return;
   await mongoose.connect(process.env.MONGO_URI, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 10000,
+    socketTimeoutMS: 45000,
   });
   isConnected = true;
 }
-connectDB().catch(console.error);
+// Warm-start (non-blocking)
+connectDB().catch(function(e) { console.error("DB warm-start:", e.message); });
 
 // ─── Models ────────────────────────────────────────────────────────────────────
 const toolSchema = new mongoose.Schema({
@@ -860,19 +864,28 @@ function shell(pageTitle, activeNav, bodyContent) {
     document.getElementById('sidebar').classList.remove('open');
     document.getElementById('sidebarOverlay').classList.remove('open');
   }
-  document.getElementById('hamburgerBtn').addEventListener('click', () => {
-    document.getElementById('sidebar').classList.contains('open') ? closeSidebar() : openSidebar();
+  document.getElementById('hamburgerBtn').addEventListener('click', function() {
+    var s = document.getElementById('sidebar');
+    s.classList.contains('open') ? closeSidebar() : openSidebar();
   });
 
   // Stagger child animations
-  document.querySelectorAll('.stat-card').forEach((el, i) => {
-    el.style.animationDelay = (i * 0.07) + 's';
-  });
+  var cards = document.querySelectorAll('.stat-card');
+  for (var i = 0; i < cards.length; i++) {
+    cards[i].style.animationDelay = (i * 0.07) + 's';
+  }
 
-  // Auto-dismiss alerts
-  document.querySelectorAll('.alert').forEach(el => {
-    setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity 0.5s'; setTimeout(() => el.remove(), 500); }, 4000);
-  });
+  // Auto-dismiss alerts after 4s
+  var alerts = document.querySelectorAll('.alert');
+  for (var j = 0; j < alerts.length; j++) {
+    (function(el) {
+      setTimeout(function() {
+        el.style.transition = 'opacity 0.5s';
+        el.style.opacity = '0';
+        setTimeout(function() { el.remove(); }, 500);
+      }, 4000);
+    })(alerts[j]);
+  }
 </script>
 
 </body>
@@ -1084,110 +1097,128 @@ app.get('/home', async (req, res) => {
       Ebook.countDocuments(),
     ]);
 
-    const c1 = { labels:['Basic Quizzes','Advanced Quizzes','Total Users'], datasets:[{label:'Counts',data:[basicQ,advQ,users],backgroundColor:['rgba(99,130,255,0.7)','rgba(167,139,250,0.7)','rgba(52,211,153,0.7)'],borderColor:['#6382ff','#a78bfa','#34d399'],borderWidth:2,borderRadius:8}] };
-    const c2 = { labels:['Basic Quizzes','Advanced Quizzes'], datasets:[{data:[basicQ,advQ],backgroundColor:['rgba(99,130,255,0.8)','rgba(167,139,250,0.8)'],borderColor:['#6382ff','#a78bfa'],borderWidth:2}] };
+    // Pre-serialize chart data BEFORE building template literal
+    // Use Number() to ensure these are always plain integers — no DB strings
+    const tc  = Number(toolCount)  || 0;
+    const uc  = Number(users)      || 0;
+    const ec  = Number(ebookCount) || 0;
+    const bq  = Number(basicQ)     || 0;
+    const aq  = Number(advQ)       || 0;
+    const qTotal = bq + aq;
 
-    const body = `
-      <div class="page-header">
-        <div class="page-eyebrow">Overview</div>
-        <h1 class="page-title">Dashboard</h1>
-        <p class="page-sub">Welcome back, Admin. Here's what's happening today.</p>
-      </div>
+    // Build health cards HTML using string concat to avoid nested template literals
+    var healthCards = '';
+    var hItems = [
+      ['Uptime',       '99.9%', '99.9%',  'var(--accent)'],
+      ['Response Time','142ms', '70%',    'var(--accent3)'],
+      ['DB Connections','3/10', '30%',    'var(--accent4)'],
+      ['Error Rate',   '0.01%','5%',      'var(--accent3)'],
+    ];
+    for (var hi = 0; hi < hItems.length; hi++) {
+      var hl = hItems[hi][0], hv = hItems[hi][1], hw = hItems[hi][2], hc = hItems[hi][3];
+      healthCards += '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:18px">'
+        + '<div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">' + hl + '</div>'
+        + '<div style="font-size:24px;font-weight:700;font-family:Space Grotesk,sans-serif;color:var(--text)">' + hv + '</div>'
+        + '<div style="height:4px;background:var(--border);border-radius:2px;margin-top:10px">'
+        + '<div style="height:100%;width:' + hw + ';background:' + hc + ';border-radius:2px"></div>'
+        + '</div></div>';
+    }
 
-      <div class="cards-grid">
-        <div class="stat-card blue stagger-1">
-          <div class="stat-icon"><i class="fa fa-robot"></i></div>
-          <div class="stat-value" id="cnt-tools">0</div>
-          <div class="stat-label">AI Tools</div>
-          <div class="stat-trend blue"><i class="fa fa-database" style="font-size:9px"></i> In MongoDB</div>
-        </div>
-        <div class="stat-card purple stagger-2">
-          <div class="stat-icon"><i class="fa fa-users"></i></div>
-          <div class="stat-value" id="cnt-users">0</div>
-          <div class="stat-label">Registered Users</div>
-          <div class="stat-trend up"><i class="fa fa-arrow-up" style="font-size:9px"></i> Active</div>
-        </div>
-        <div class="stat-card green stagger-3">
-          <div class="stat-icon"><i class="fa fa-book-open"></i></div>
-          <div class="stat-value" id="cnt-ebooks">0</div>
-          <div class="stat-label">Ebooks</div>
-          <div class="stat-trend blue"><i class="fa fa-database" style="font-size:9px"></i> In MongoDB</div>
-        </div>
-        <div class="stat-card amber stagger-4">
-          <div class="stat-icon"><i class="fa fa-circle-check"></i></div>
-          <div class="stat-value" id="cnt-quiz">0</div>
-          <div class="stat-label">Quiz Attempts</div>
-          <div class="stat-trend up"><i class="fa fa-arrow-up" style="font-size:9px"></i> Total</div>
-        </div>
-      </div>
+    const body = '<div class="page-header">'
+      + '<div class="page-eyebrow">Overview</div>'
+      + '<h1 class="page-title">Dashboard</h1>'
+      + '<p class="page-sub">Welcome back, Admin. Here\'s what\'s happening.</p>'
+      + '</div>'
 
-      <div class="charts-grid">
-        <div class="chart-card">
-          <div class="chart-title">Platform Statistics</div>
-          <div class="chart-sub">Users, quizzes and activity</div>
-          <canvas id="chart1" height="220"></canvas>
-        </div>
-        <div class="chart-card">
-          <div class="chart-title">Quiz Distribution</div>
-          <div class="chart-sub">Basic vs Advanced completion</div>
-          <canvas id="chart2" height="220"></canvas>
-        </div>
-      </div>
+      + '<div class="cards-grid">'
+      + '<div class="stat-card blue stagger-1"><div class="stat-icon"><i class="fa fa-robot"></i></div><div class="stat-value" id="cnt-tools">0</div><div class="stat-label">AI Tools</div><div class="stat-trend blue"><i class="fa fa-database" style="font-size:9px"></i> In MongoDB</div></div>'
+      + '<div class="stat-card purple stagger-2"><div class="stat-icon"><i class="fa fa-users"></i></div><div class="stat-value" id="cnt-users">0</div><div class="stat-label">Registered Users</div><div class="stat-trend up"><i class="fa fa-arrow-up" style="font-size:9px"></i> Active</div></div>'
+      + '<div class="stat-card green stagger-3"><div class="stat-icon"><i class="fa fa-book-open"></i></div><div class="stat-value" id="cnt-ebooks">0</div><div class="stat-label">Ebooks</div><div class="stat-trend blue"><i class="fa fa-database" style="font-size:9px"></i> In MongoDB</div></div>'
+      + '<div class="stat-card amber stagger-4"><div class="stat-icon"><i class="fa fa-circle-check"></i></div><div class="stat-value" id="cnt-quiz">0</div><div class="stat-label">Quiz Attempts</div><div class="stat-trend up"><i class="fa fa-arrow-up" style="font-size:9px"></i> Total</div></div>'
+      + '</div>'
 
-      <div class="panel">
-        <div class="panel-header">
-          <div>
-            <div class="panel-title">Server Health</div>
-            <div class="panel-sub">Real-time infrastructure status</div>
-          </div>
-          <span class="badge badge-green"><i class="fa fa-circle" style="font-size:8px"></i> All systems operational</span>
-        </div>
-        <div style="padding:24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px">
-          ${[['Uptime','99.9%','blue'],['Response Time','142ms','green'],['DB Connections','3/10','amber'],['Error Rate','0.01%','green']].map(([l,v,c])=>`
-          <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:18px">
-            <div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">${l}</div>
-            <div style="font-size:24px;font-weight:700;font-family:'Space Grotesk',sans-serif;color:var(--text)">${v}</div>
-            <div style="height:4px;background:var(--border);border-radius:2px;margin-top:10px">
-              <div style="height:100%;width:${v.includes('%')?v:'70%'};background:var(--accent${c==='green'?'3':c==='amber'?'4':''});border-radius:2px;transition:width 1s ease"></div>
-            </div>
-          </div>`).join('')}
-        </div>
-      </div>
+      + '<div class="charts-grid">'
+      + '<div class="chart-card"><div class="chart-title">Platform Statistics</div><div class="chart-sub">Users, quizzes and activity</div><canvas id="chart1" height="220"></canvas></div>'
+      + '<div class="chart-card"><div class="chart-title">Quiz Distribution</div><div class="chart-sub">Basic vs Advanced</div><canvas id="chart2" height="220"></canvas></div>'
+      + '</div>'
 
-      <script>
-        // Animate counters
-        function animateCount(id, target) {
-          let start = 0;
-          const step = target / 40;
-          const el = document.getElementById(id);
-          const timer = setInterval(() => {
-            start = Math.min(start + Math.ceil(step), target);
-            el.textContent = start.toLocaleString();
-            if (start >= target) clearInterval(timer);
-          }, 30);
-        }
-        animateCount('cnt-tools',  ${toolCount});
-        animateCount('cnt-users',  ${users});
-        animateCount('cnt-ebooks', ${ebookCount});
-        animateCount('cnt-quiz',   ${basicQ + advQ});
+      + '<div class="panel"><div class="panel-header"><div><div class="panel-title">Server Health</div><div class="panel-sub">Infrastructure status</div></div>'
+      + '<span class="badge badge-green"><i class="fa fa-circle" style="font-size:8px"></i> All systems operational</span></div>'
+      + '<div style="padding:24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px">'
+      + healthCards
+      + '</div></div>'
 
-        const chartDefaults = {
-          plugins: { legend: { labels: { color: '#94a3b8', font: { size: 12 }, boxWidth: 12 } } },
-        };
-        new Chart(document.getElementById('chart1'), {
-          type: 'bar', data: ${JSON.stringify(c1)},
-          options: { ...chartDefaults, responsive: true, scales: { x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(99,130,255,0.06)' } }, y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(99,130,255,0.06)' }, beginAtZero: true } } }
-        });
-        new Chart(document.getElementById('chart2'), {
-          type: 'doughnut', data: ${JSON.stringify(c2)},
-          options: { ...chartDefaults, cutout: '68%', responsive: true }
-        });
-      </script>
-    `;
+      // Inject data via a hidden element — completely avoids template literal nesting
+      + '<div id="dash-data"'
+      + ' data-tools="'  + tc     + '"'
+      + ' data-users="'  + uc     + '"'
+      + ' data-ebooks="' + ec     + '"'
+      + ' data-quiz="'   + qTotal + '"'
+      + ' data-bq="'     + bq     + '"'
+      + ' data-aq="'     + aq     + '"'
+      + ' style="display:none"></div>'
+
+      + '<script>'
+      + 'window.addEventListener("DOMContentLoaded", function() {'
+      + '  var d = document.getElementById("dash-data");'
+      + '  if (!d) return;'
+      + '  var tc = parseInt(d.dataset.tools,10);'
+      + '  var uc = parseInt(d.dataset.users,10);'
+      + '  var ec = parseInt(d.dataset.ebooks,10);'
+      + '  var qc = parseInt(d.dataset.quiz,10);'
+      + '  var bq = parseInt(d.dataset.bq,10);'
+      + '  var aq = parseInt(d.dataset.aq,10);'
+      + '  function animateCount(id, target) {'
+      + '    var el = document.getElementById(id); if (!el) return;'
+      + '    var start = 0, step = Math.max(1, Math.ceil(target / 40));'
+      + '    var t = setInterval(function() {'
+      + '      start = Math.min(start + step, target);'
+      + '      el.textContent = start.toLocaleString();'
+      + '      if (start >= target) clearInterval(t);'
+      + '    }, 30);'
+      + '  }'
+      + '  animateCount("cnt-tools",  tc);'
+      + '  animateCount("cnt-users",  uc);'
+      + '  animateCount("cnt-ebooks", ec);'
+      + '  animateCount("cnt-quiz",   qc);'
+      + '  if (typeof Chart === "undefined") return;'
+      + '  var leg = { color: "#94a3b8", font: { size: 12 }, boxWidth: 12 };'
+      + '  var gc  = "rgba(99,130,255,0.06)";'
+      + '  var c1el = document.getElementById("chart1");'
+      + '  var c2el = document.getElementById("chart2");'
+      + '  if (c1el) {'
+      + '    new Chart(c1el, {'
+      + '      type: "bar",'
+      + '      data: {'
+      + '        labels: ["Basic Quizzes","Advanced Quizzes","Total Users"],'
+      + '        datasets: [{ label: "Counts", data: [bq, aq, uc],'
+      + '          backgroundColor: ["rgba(99,130,255,0.7)","rgba(167,139,250,0.7)","rgba(52,211,153,0.7)"],'
+      + '          borderColor: ["#6382ff","#a78bfa","#34d399"],'
+      + '          borderWidth: 2, borderRadius: 8 }]'
+      + '      },'
+      + '      options: { responsive: true, plugins: { legend: { labels: leg } },'
+      + '        scales: { x: { ticks:{color:"#64748b"}, grid:{color:gc} }, y: { ticks:{color:"#64748b"}, grid:{color:gc}, beginAtZero:true } } }'
+      + '    });'
+      + '  }'
+      + '  if (c2el) {'
+      + '    new Chart(c2el, {'
+      + '      type: "doughnut",'
+      + '      data: {'
+      + '        labels: ["Basic Quizzes","Advanced Quizzes"],'
+      + '        datasets: [{ data: [bq, aq],'
+      + '          backgroundColor: ["rgba(99,130,255,0.8)","rgba(167,139,250,0.8)"],'
+      + '          borderColor: ["#6382ff","#a78bfa"], borderWidth: 2 }]'
+      + '      },'
+      + '      options: { responsive: true, cutout: "68%", plugins: { legend: { labels: leg } } }'
+      + '    });'
+      + '  }'
+      + '});'
+      + '</script>';
+
     res.send(shell('Dashboard', 'home', body));
   } catch (err) {
     console.error(err);
-    res.status(500).send('Error loading dashboard');
+    res.status(500).send('<h2 style="font-family:sans-serif;padding:40px;color:red">Dashboard error: ' + err.message + '</h2>');
   }
 });
 
@@ -1612,9 +1643,21 @@ app.get('/analytics', async (req, res) => {
       </div>
 
       <script>
-        const co = { plugins:{ legend:{ labels:{ color:'#94a3b8', font:{ size:12 }, boxWidth:12 } } } };
-        new Chart(document.getElementById('ca1'),{ type:'doughnut', data:{ labels:['Tools','Ebooks'], datasets:[{ data:[${toolCount},${ebookCount}], backgroundColor:['rgba(99,130,255,0.8)','rgba(245,158,11,0.8)'], borderColor:['#6382ff','#f59e0b'], borderWidth:2 }] }, options:{ ...co, cutout:'65%' } });
-        new Chart(document.getElementById('ca2'),{ type:'bar', data:{ labels:['All Tools','Featured','Free'], datasets:[{ data:[${toolCount},${featuredCount},${freeCount}], backgroundColor:['rgba(99,130,255,0.7)','rgba(245,158,11,0.7)','rgba(52,211,153,0.7)'], borderRadius:8 }] }, options:{ ...co, scales:{ x:{ ticks:{color:'#64748b'}, grid:{color:'rgba(99,130,255,0.06)'} }, y:{ ticks:{color:'#64748b'}, grid:{color:'rgba(99,130,255,0.06)'}, beginAtZero:true } } } });
+        window.addEventListener('DOMContentLoaded', function() {
+          var legendLabels = { color: '#94a3b8', font: { size: 12 }, boxWidth: 12 };
+          var gridColor = 'rgba(99,130,255,0.06)';
+          if (typeof Chart === 'undefined') return;
+          new Chart(document.getElementById('ca1'), {
+            type: 'doughnut',
+            data: { labels: ['Tools','Ebooks'], datasets: [{ data: [${toolCount},${ebookCount}], backgroundColor: ['rgba(99,130,255,0.8)','rgba(245,158,11,0.8)'], borderColor: ['#6382ff','#f59e0b'], borderWidth: 2 }] },
+            options: { responsive: true, cutout: '65%', plugins: { legend: { labels: legendLabels } } }
+          });
+          new Chart(document.getElementById('ca2'), {
+            type: 'bar',
+            data: { labels: ['All Tools','Featured','Free'], datasets: [{ data: [${toolCount},${featuredCount},${freeCount}], backgroundColor: ['rgba(99,130,255,0.7)','rgba(245,158,11,0.7)','rgba(52,211,153,0.7)'], borderRadius: 8 }] },
+            options: { responsive: true, plugins: { legend: { labels: legendLabels } }, scales: { x: { ticks: { color: '#64748b' }, grid: { color: gridColor } }, y: { ticks: { color: '#64748b' }, grid: { color: gridColor }, beginAtZero: true } } }
+          });
+        });
       </script>`;
     res.send(shell('Analytics', 'analytics', body));
   } catch (err) { res.status(500).send('Error'); }
